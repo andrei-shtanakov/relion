@@ -68,106 +68,6 @@ class EB_RELION(CMakeMake):
 
         self.log.info("=== RELION EXTRACT STEP END ===")
 
-    def configure_step(self):
-        """Configure RELION build."""
-        self.log.info("=== RELION CONFIGURE STEP START ===")
-
-        # Create torch directory early (like in bash script)
-        torch_home = os.path.join(self.installdir, 'torch')
-        os.makedirs(torch_home, exist_ok=True)
-        self.log.info(f"Created torch directory: {torch_home}")
-
-        # Setup conda environment before CMake
-        if not self.cfg['skip_conda_env']:
-            self.log.info("Setting up conda environment...")
-            self._setup_conda_environment()
-        else:
-            self.log.info("Skipping conda environment setup")
-
-        # Set up cmake options
-        if self.conda_env_path and os.path.exists(self.conda_env_path):
-            python_exe = os.path.join(self.conda_env_path, 'bin', 'python')
-            if os.path.exists(python_exe):
-                self.cfg.update('configopts', f' -DPYTHON_EXE_PATH={python_exe}')
-                self.log.info(f"Set Python exe path: {python_exe}")
-
-        self.cfg.update('configopts', f' -DTORCH_HOME_PATH={torch_home}')
-
-        # Override the build directory to be inside source (like in bash script)
-        self.cfg['start_dir'] = self.relion_src_dir
-        self.cfg['separate_build_dir'] = True
-        self.cfg['build_in_installdir'] = False
-        
-        # Create build directory in source
-        build_dir = os.path.join(self.relion_src_dir, 'build')
-        if not os.path.exists(build_dir):
-            os.makedirs(build_dir)
-        self.cfg['builddir'] = build_dir
-        
-        self.log.info(f"Build directory: {build_dir}")
-        self.log.info("=== RELION CONFIGURE STEP END ===")
-        
-        # Now call parent configure
-        super().configure_step()
-
-    def _setup_conda_environment(self):
-        """Create conda environment following the working bash script approach."""
-        self.log.info("=== CONDA ENVIRONMENT SETUP START ===")
-        
-        # Find conda command
-        conda_cmd = self._find_conda_cmd()
-        if not conda_cmd:
-            raise EasyBuildError("No conda available")
-        
-        self.log.info(f"Using conda command: {conda_cmd}")
-
-        # Use same path as working script
-        self.conda_env_path = os.path.join(self.installdir, 'conda')
-        self.log.info(f"Conda environment path: {self.conda_env_path}")
-        
-        # Remove existing environment if it exists
-        if os.path.exists(self.conda_env_path):
-            self.log.info(f"Removing existing conda environment: {self.conda_env_path}")
-            shutil.rmtree(self.conda_env_path)
-        
-        # Ensure install directory exists
-        os.makedirs(self.installdir, exist_ok=True)
-
-        # Find environment_blackwell.yml
-        env_file = os.path.join(self.relion_src_dir, 'environment_blackwell.yml')
-        if not os.path.exists(env_file):
-            raise EasyBuildError(f"environment_blackwell.yml not found at: {env_file}")
-
-        # Change to source directory for conda env creation
-        orig_dir = os.getcwd()
-        change_dir(self.relion_src_dir)
-
-        try:
-            # Create conda environment
-            cmd = f"{conda_cmd} env create --file environment_blackwell.yml --prefix {self.conda_env_path}"
-            self.log.info(f"Creating conda environment: {cmd}")
-            run_shell_cmd(cmd)
-
-            # Install additional packages via pip
-            pip_cmd = os.path.join(self.conda_env_path, 'bin', 'pip')
-            if os.path.exists(pip_cmd):
-                # Install packages into the conda environment prefix
-                extra_packages = ['napari', 'napari-threedee', 'qtpy', 'psygnal', 'pyqt5']
-                pip_install_cmd = f"{pip_cmd} install {' '.join(extra_packages)} --prefix {self.conda_env_path}"
-                self.log.info(f"Installing extra packages: {pip_install_cmd}")
-                run_shell_cmd(pip_install_cmd)
-            else:
-                self.log.warning(f"pip not found at: {pip_cmd}")
-
-            # Clean conda cache
-            cleanup_cmd = f"{conda_cmd} clean -ya"
-            self.log.info(f"Running cleanup: {cleanup_cmd}")
-            run_shell_cmd(cleanup_cmd)
-
-        finally:
-            change_dir(orig_dir)
-            
-        self.log.info("=== CONDA ENVIRONMENT SETUP END ===")
 
     def _find_conda_cmd(self):
         """Find available conda command."""
@@ -186,22 +86,133 @@ class EB_RELION(CMakeMake):
 
         return None
 
+    def configure_step(self):
+        """Configure RELION build."""
+        self.log.info("=== RELION CONFIGURE STEP START ===")
+
+        # Create torch directory early (like in bash script)
+        torch_home = os.path.join(self.installdir, 'torch')
+        os.makedirs(torch_home, exist_ok=True)
+        self.log.info(f"Created torch directory: {torch_home}")
+
+        # Setup conda environment OUTSIDE installdir to prevent deletion
+        if not self.cfg['skip_conda_env']:
+            self.log.info("Setting up conda environment...")
+            # Создаем conda во временной директории, НЕ в installdir
+            self.temp_conda_path = os.path.join(tempfile.gettempdir(), f'relion_conda_{os.getpid()}')
+            self._setup_conda_environment_temp()
+        else:
+            self.log.info("Skipping conda environment setup")
+
+        # Set up cmake options
+        if hasattr(self, 'temp_conda_path') and os.path.exists(self.temp_conda_path):
+            python_exe = os.path.join(self.temp_conda_path, 'bin', 'python')
+            if os.path.exists(python_exe):
+                self.cfg.update('configopts', f' -DPYTHON_EXE_PATH={python_exe}')
+                self.log.info(f"Set Python exe path: {python_exe}")
+
+        self.cfg.update('configopts', f' -DTORCH_HOME_PATH={torch_home}')
+
+        # Override the build directory to be inside source (like in bash script)
+        self.cfg['start_dir'] = self.relion_src_dir
+        self.cfg['separate_build_dir'] = True
+        self.cfg['build_in_installdir'] = False
+
+        # Create build directory in source (НЕ устанавливаем cfg['builddir']!)
+        build_dir = os.path.join(self.relion_src_dir, 'build')
+        if not os.path.exists(build_dir):
+            os.makedirs(build_dir)
+
+        self.log.info(f"Build directory: {build_dir}")
+        self.log.info("=== RELION CONFIGURE STEP END ===")
+
+        # Now call parent configure
+        super().configure_step()
+
+    def _setup_conda_environment_temp(self):
+        """Create conda environment in TEMPORARY location (not in installdir)."""
+        self.log.info("=== CONDA ENVIRONMENT SETUP START ===")
+
+        # Find conda command
+        conda_cmd = self._find_conda_cmd()
+        if not conda_cmd:
+            raise EasyBuildError("No conda available")
+
+        self.log.info(f"Using conda command: {conda_cmd}")
+
+        # Use TEMPORARY path instead of installdir
+        self.log.info(f"Temporary conda environment path: {self.temp_conda_path}")
+
+        # Remove existing environment if it exists
+        if os.path.exists(self.temp_conda_path):
+            self.log.info(f"Removing existing temporary conda environment: {self.temp_conda_path}")
+            shutil.rmtree(self.temp_conda_path)
+
+        # Find environment_blackwell.yml
+        env_file = os.path.join(self.relion_src_dir, 'environment_blackwell.yml')
+        if not os.path.exists(env_file):
+            raise EasyBuildError(f"environment_blackwell.yml not found at: {env_file}")
+
+        # Change to source directory for conda env creation
+        orig_dir = os.getcwd()
+        change_dir(self.relion_src_dir)
+
+        try:
+            # Create conda environment in temporary location
+            cmd = f"{conda_cmd} env create --file environment_blackwell.yml --prefix {self.temp_conda_path}"
+            self.log.info(f"Creating conda environment: {cmd}")
+            run_shell_cmd(cmd)
+
+            # Install additional packages via pip
+            pip_cmd = os.path.join(self.temp_conda_path, 'bin', 'pip')
+            if os.path.exists(pip_cmd):
+                extra_packages = ['napari', 'napari-threedee', 'qtpy', 'psygnal', 'pyqt5']
+                pip_install_cmd = f"{pip_cmd} install {' '.join(extra_packages)}"
+                self.log.info(f"Installing extra packages: {pip_install_cmd}")
+                run_shell_cmd(pip_install_cmd)
+            else:
+                self.log.warning(f"pip not found at: {pip_cmd}")
+
+            # Clean conda cache
+            cleanup_cmd = f"{conda_cmd} clean -ya"
+            self.log.info(f"Running cleanup: {cleanup_cmd}")
+            run_shell_cmd(cleanup_cmd)
+
+        finally:
+            change_dir(orig_dir)
+
+        self.log.info("=== CONDA ENVIRONMENT SETUP END ===")
+
     def install_step(self):
-        """Install RELION."""
+        """Install RELION and then move conda environment to final location."""
         self.log.info("=== RELION INSTALL STEP START ===")
+
         super().install_step()
-        
-        # Copy qsub.csh to bin
+
+        if hasattr(self, 'temp_conda_path') and os.path.exists(self.temp_conda_path):
+            final_conda_path = os.path.join(self.installdir, 'conda')
+            self.log.info(f"Moving conda from {self.temp_conda_path} to {final_conda_path}")
+
+            os.makedirs(self.installdir, exist_ok=True)
+
+            shutil.move(self.temp_conda_path, final_conda_path)
+
+            self.conda_env_path = final_conda_path
+            self.log.info(f"Conda environment successfully moved to: {final_conda_path}")
+        else:
+            self.log.info("No temporary conda environment to move")
+
+        # 3. Copy qsub.csh to bin
         qsub_src = os.path.join(self.relion_src_dir, 'gui', 'qsub.csh')
         qsub_dst = os.path.join(self.installdir, 'bin', 'qsub.csh')
         if os.path.exists(qsub_src):
             copy_file(qsub_src, qsub_dst)
             self.log.info(f"Copied qsub.csh to {qsub_dst}")
-        
-        # Install model-angelo if requested
+
+        # 4. Install model-angelo if requested
         if self.cfg.get('install_model_angelo') and self.cfg.get('model_angelo_source'):
             self._install_model_angelo()
-        
+
         self.log.info("=== RELION INSTALL STEP END ===")
 
     def _install_model_angelo(self):
