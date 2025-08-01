@@ -1,0 +1,118 @@
+easyblock = 'EB_RELION'
+
+name = 'RELION'
+version = '5.0.0'
+
+homepage = 'https://github.com/3dem/relion'
+description = """RELION (for REgularised LIkelihood OptimisatioN) is a stand-alone computer
+program for Maximum A Posteriori refinement of (multiple) 3D reconstructions or 2D class
+averages in cryo-electron microscopy."""
+
+toolchain = {'name': 'foss', 'version': '2023a'}
+
+sources = [
+    {
+        'filename': 'relion-%(version)s.tar.gz',
+        'download_filename': 'ver%(version)s.tar.gz',
+        'git_config': {
+            'url': 'https://github.com/3dem/',
+            'repo_name': 'relion',
+            'branch': 'ver5.0',
+        }
+    }
+]
+ 
+
+
+
+
+# Добавьте путь к model-angelo архиву, если нужно
+# sources.append('model-angelo-main.tar.gz')
+
+builddependencies = [
+    ('pkgconf', '1.9.5'),
+    ('CMake', '3.26.3'),
+    ('Conda', '24.7.1-0', '', SYSTEM),  # Важно для создания conda окружения
+]
+
+dependencies = [
+    ('X11', '20230603'),
+    ('FLTK', '1.3.8'),
+    ('LibTIFF', '4.5.0'),
+    ('libpng', '1.6.39'),
+    ('tbb', '2021.11.0'),
+    ('CUDA', '12.1.1', '', SYSTEM),
+    ('OpenMPI', '4.1.5'),  # Добавлено явно
+]
+
+conda_env_file = 'environment.yml'
+python_env_name = 'relion-5.0'
+
+# model_angelo_source = '%(builddir)s/model-angelo-main.tar.gz'
+
+configopts = ' '.join([
+    '-DCMAKE_INSTALL_PREFIX=%(installdir)s/',
+    '-DCMAKE_SHARED_LINKER_FLAGS="-lpthread"',
+    '-DMPI_INCLUDE_PATH=$EBROOTOPENMPI/include',
+    '-DMPI_C_COMPILER=$EBROOTOPENMPI/bin/mpicc', 
+    '-DMPI_CXX_COMPILER=$EBROOTOPENMPI/bin/mpicxx',
+    '-DCUDA=ON',
+    '-DCudaTexture=ON',
+    '-DCUDA_ARCH=80',
+    '-DCMAKE_BUILD_TYPE=Release',
+    '-DGUI=ON',
+    # Python и Torch пути будут добавлены автоматически в easyblock
+])
+
+buildopts = 'VERBOSE=1'
+
+prebuildopts = 'export CUDA_HOME=$EBROOTCUDA && '
+
+sanity_check_paths = {
+    'files': [
+        'bin/relion',
+        'bin/relion_refine',
+        'bin/relion_refine_mpi',
+        'bin/relion_reconstruct',
+        'bin/relion_reconstruct_mpi',
+        'bin/relion_preprocess',
+        'bin/relion_postprocess',
+        'bin/relion_autopick',
+        'bin/relion_autopick_mpi',
+        'bin/relion_particle_polish',
+        'bin/relion_particle_polish_mpi',
+        'bin/relion_ctf_refine',
+        'bin/relion_ctf_refine_mpi',
+        'bin/qsub.csh',
+    ],
+    'dirs': ['bin', 'conda', 'torch'],
+}
+
+# Команды для проверки
+sanity_check_commands = [
+    'relion --version',
+    'which relion_refine_mpi',
+]
+
+moduleclass = 'bio'
+
+modextravars = {
+    'RELION_CTFFIND_EXECUTABLE': '%(installdir)s/bin/ctffind',  # Измените на реальный путь
+    'RELION_MOTIONCOR2_EXECUTABLE': '%(installdir)s/bin/motioncor2',  # Измените на реальный путь
+    'RELION_QSUB_TEMPLATE': '%(installdir)s/bin/qsub.csh',
+    'RELION_SHELL': 'csh',
+    'RELION_SCRATCH_DIR': '/tmp',
+}
+
+postinstallcmds = [
+    'ln -sf %(installdir)s/conda/bin/python %(installdir)s/bin/relion_python || true',
+]
+
+modloadmsg = """
+RELION has been installed with CUDA support and Python environment.
+To use RELION effectively:
+1. Make sure CTFFIND4 is installed and update RELION_CTFFIND_EXECUTABLE
+2. Install MotionCor2 if needed and update RELION_MOTIONCOR2_EXECUTABLE
+3. The conda environment is at $EBROOTRELION/conda
+4. Model weights will be downloaded to $EBROOTRELION/torch when needed
+"""
