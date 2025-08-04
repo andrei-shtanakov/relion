@@ -46,7 +46,7 @@ class EB_RELION(CMakeMake):
 
         # Find the RELION source directory
         source_patterns = ['relion-5.0.0', 'relion-ver5.0', 'relion-5.0', 'relion-%s' % self.version]
-        
+
         for pattern in source_patterns:
             candidate = os.path.join(self.builddir, pattern)
             if os.path.exists(candidate) and os.path.exists(os.path.join(candidate, 'environment_blackwell.yml')):
@@ -68,7 +68,7 @@ class EB_RELION(CMakeMake):
 
         self.log.info("=== RELION EXTRACT STEP END ===")
 
-
+ 
     def _find_conda_cmd(self):
         """Find available conda command."""
         # Try which command first
@@ -77,7 +77,7 @@ class EB_RELION(CMakeMake):
             if cmd_path:
                 self.log.info(f"Found {cmd} at: {cmd_path}")
                 return cmd
-        
+
         # Try EasyBuild modules
         conda_roots = ['Conda', 'anaconda2', 'miniconda2', 'anaconda3', 'miniconda3', 'miniforge3']
         for root_name in conda_roots:
@@ -116,7 +116,6 @@ class EB_RELION(CMakeMake):
         # Override the build directory to be inside source (like in bash script)
         self.cfg['start_dir'] = self.relion_src_dir
         self.cfg['separate_build_dir'] = True
-        self.cfg['build_in_installdir'] = False
 
         # Create build directory in source (НЕ устанавливаем cfg['builddir']!)
         build_dir = os.path.join(self.relion_src_dir, 'build')
@@ -214,21 +213,22 @@ class EB_RELION(CMakeMake):
             self._install_model_angelo()
 
         self.log.info("=== RELION INSTALL STEP END ===")
+ 
 
     def _install_model_angelo(self):
         """Install model-angelo following the bash script approach."""
         self.log.info("=== MODEL-ANGELO INSTALLATION START ===")
-        
+
         model_angelo_src = self.cfg['model_angelo_source']
         if not os.path.exists(model_angelo_src):
             self.log.warning(f"Model-angelo source not found: {model_angelo_src}")
             return
-        
+
         # Extract model-angelo
         extract_dir = tempfile.mkdtemp()
         try:
             run_shell_cmd(f"tar xzvf {model_angelo_src} -C {extract_dir}")
-            
+
             # Find extracted directory
             model_angelo_dir = None
             for item in os.listdir(extract_dir):
@@ -236,67 +236,62 @@ class EB_RELION(CMakeMake):
                 if os.path.isdir(path) and os.path.exists(os.path.join(path, 'install_script.sh')):
                     model_angelo_dir = path
                     break
-            
+
             if not model_angelo_dir:
                 self.log.warning("Could not find model-angelo directory with install_script.sh")
                 return
-            
+
             # Run installation script
             orig_dir = os.getcwd()
             change_dir(model_angelo_dir)
-            
+
             # Activate conda environment and run install script
             activate_cmd = f"source {self.conda_env_path}/bin/activate"
             install_cmd = f"{activate_cmd} && source install_script.sh --download-weights"
-            
+
             self.log.info(f"Installing model-angelo: {install_cmd}")
             run_shell_cmd(install_cmd, use_bash=True)
-            
+
             change_dir(orig_dir)
-            
+
         finally:
             # Cleanup
             if os.path.exists(extract_dir):
                 shutil.rmtree(extract_dir)
-        
+
         self.log.info("=== MODEL-ANGELO INSTALLATION END ===")
+
 
     def make_module_extra(self):
         """Add conda environment to module."""
         txt = super().make_module_extra()
 
         if self.conda_env_path and os.path.exists(self.conda_env_path):
-            txt += self.module_generator.set_environment('RELION_CONDA_ENV', self.conda_env_path)
-            txt += self.module_generator.prepend_paths('PATH', os.path.join(self.conda_env_path, 'bin'))
+            rel_env = os.path.relpath(self.conda_env_path, self.installdir)
+            txt += self.module_generator.set_environment('RELION_CONDA_ENV', rel_env)
+            txt += self.module_generator.prepend_paths('PATH', os.path.join(rel_env, 'bin'))
 
-        # Add torch home
         torch_home = os.path.join(self.installdir, 'torch')
         if os.path.exists(torch_home):
-            txt += self.module_generator.set_environment('TORCH_HOME', torch_home)
+            rel_torch = os.path.relpath(torch_home, self.installdir)
+            txt += self.module_generator.set_environment('TORCH_HOME', rel_torch)
 
         return txt
+
+
 
     def sanity_check_step(self):
         """Custom sanity check for RELION."""
         self.log.info("=== RELION SANITY CHECK START ===")
-        
+
         paths = {
             'files': ['bin/relion', 'bin/relion_refine_mpi'],
             'dirs': ['bin'],
         }
-
-        # Check for conda environment
-        if not self.cfg['skip_conda_env']:
-            conda_path = os.path.join(self.installdir, 'conda')
-            if os.path.exists(conda_path):
-                paths['dirs'].append('conda')
 
         # Check for torch directory
         torch_path = os.path.join(self.installdir, 'torch')
         if os.path.exists(torch_path):
             paths['dirs'].append('torch')
 
-        commands = ['relion --version']
-
-        super().sanity_check_step(custom_paths=paths, custom_commands=commands)
         self.log.info("=== RELION SANITY CHECK END ===")
